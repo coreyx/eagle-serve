@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Eagle Serve</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div id="app" class="app">
+        <!-- Server status -->
+        <header id="status" class="status" data-status="stopped">
+            <div class="status-head">
+                <span class="lamp" aria-hidden="true"></span>
+                <div class="status-text">
+                    <h1 id="status-title">Server is stopped</h1>
+                    <p id="status-detail" class="path"></p>
+                </div>
+                <button id="toggle-btn" type="button" class="btn btn-primary">Start server</button>
+            </div>
+
+            <!-- Addresses dynamically rendered by app.js -->
+            <ul id="url-list" class="url-list"></ul>
+
+            <p id="status-error" class="notice notice-error" role="alert" hidden></p>
+
+            <div id="rclone-missing" class="notice" hidden>
+                <p>Eagle Serve uses <strong>rclone</strong> to do the serving, and it is not on this computer yet. Download it from rclone.org (about 25 MB), or point to a copy you already have.</p>
+                <div class="actions">
+                    <button id="rclone-download-btn" type="button" class="btn btn-primary">Download rclone</button>
+                    <button id="rclone-locate-btn" type="button" class="btn">Choose rclone…</button>
+                </div>
+            </div>
+        </header>
+
+        <main class="settings">
+            <!-- Folder -->
+            <section class="group">
+                <h2>Folder</h2>
+                <div class="group-body">
+                    <label class="choice">
+                        <input type="radio" name="storage-mode" id="storage-library" value="library">
+                        <span>
+                            The library open in Eagle
+                            <span id="library-path" class="hint path"></span>
+                        </span>
+                    </label>
+                    <label class="choice">
+                        <input type="radio" name="storage-mode" id="storage-custom" value="custom">
+                        <span>Another folder</span>
+                    </label>
+                    <div id="storage-custom-row" class="field-row indent">
+                        <input type="text" id="storage-path" spellcheck="false" placeholder="Folder to serve" aria-label="Folder to serve">
+                        <button id="storage-browse-btn" type="button" class="btn">Browse…</button>
+                    </div>
+                    <label class="choice">
+                        <input type="checkbox" id="auto-start">
+                        <span>Start serving when Eagle starts</span>
+                    </label>
+                    <label class="choice">
+                        <input type="checkbox" id="read-only">
+                        <span>
+                            Read-only
+                            <span class="hint">Other devices can open and copy files but not change the folder.</span>
+                        </span>
+                    </label>
+                </div>
+            </section>
+
+            <!-- Network -->
+            <section class="group">
+                <h2>Network</h2>
+                <div class="group-body">
+                    <div class="field">
+                        <label for="port">Port</label>
+                        <input type="number" id="port" class="narrow" min="1" max="65535" inputmode="numeric">
+                        <p id="port-error" class="field-error" hidden>Enter a port between 1 and 65535.</p>
+                    </div>
+
+                    <div class="field">
+                        <span class="field-label">Reachable from</span>
+                        <label class="choice">
+                            <input type="checkbox" checked disabled>
+                            <span>This computer <span class="hint mono">127.0.0.1</span></span>
+                        </label>
+                        <label class="choice">
+                            <input type="checkbox" id="bind-lan">
+                            <span>Local network <span id="lan-detail" class="hint mono"></span></span>
+                        </label>
+                        <label class="choice">
+                            <input type="checkbox" id="bind-tailscale">
+                            <span>Tailscale <span id="tailscale-detail" class="hint mono"></span></span>
+                        </label>
+                    </div>
+
+                    <div class="field">
+                        <label for="extra-hosts">Other addresses</label>
+                        <input type="text" id="extra-hosts" spellcheck="false" placeholder="None">
+                        <p class="hint">Extra addresses of this computer to listen on, separated by commas. <span class="mono">0.0.0.0</span> listens on every network interface.</p>
+                    </div>
+
+                    <p id="open-warning" class="notice notice-warn" hidden></p>
+                </div>
+            </section>
+
+            <!-- HTTPS -->
+            <section class="group">
+                <h2>HTTPS</h2>
+                <div class="group-body">
+                    <label class="choice">
+                        <input type="checkbox" id="https-enabled">
+                        <span>Encrypt connections with HTTPS</span>
+                    </label>
+
+                    <div id="https-fields" class="subfields">
+                        <div class="field">
+                            <label for="cert-path">Certificate</label>
+                            <div class="field-row">
+                                <input type="text" id="cert-path" spellcheck="false" placeholder="PEM certificate file">
+                                <button id="cert-browse-btn" type="button" class="btn">Browse…</button>
+                            </div>
+                            <p id="cert-info" class="hint"></p>
+                        </div>
+                        <div class="field">
+                            <label for="key-path">Private key</label>
+                            <div class="field-row">
+                                <input type="text" id="key-path" spellcheck="false" placeholder="PEM private key file">
+                                <button id="key-browse-btn" type="button" class="btn">Browse…</button>
+                            </div>
+                        </div>
+
+                        <details id="cert-generator" class="disclosure">
+                            <summary>Generate a self-signed certificate</summary>
+                            <div class="disclosure-body">
+                                <label for="cert-names">Names and addresses the certificate covers</label>
+                                <textarea id="cert-names" rows="3" spellcheck="false"></textarea>
+                                <p class="hint">List every name or IP you will type into another device, separated by commas. The certificate is valid for one year, and each device warns about it until you install it there as trusted.</p>
+                                <div class="actions">
+                                    <button id="cert-generate-btn" type="button" class="btn">Generate certificate</button>
+                                    <button id="cert-reveal-btn" type="button" class="btn btn-quiet" hidden>Show certificate file</button>
+                                </div>
+                                <p id="cert-message" class="hint" role="status"></p>
+                            </div>
+                        </details>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Sign-in -->
+            <section class="group">
+                <h2>Sign-in</h2>
+                <div class="group-body">
+                    <label class="choice">
+                        <input type="checkbox" id="auth-enabled">
+                        <span>Require a username and password</span>
+                    </label>
+
+                    <div id="auth-fields" class="subfields">
+                        <ul id="user-list" class="user-list"></ul>
+                        <form id="user-form" class="user-form" autocomplete="off">
+                            <input type="text" id="user-name" spellcheck="false" placeholder="Username" aria-label="Username" autocomplete="off">
+                            <input type="password" id="user-password" placeholder="Password" aria-label="Password" autocomplete="new-password">
+                            <button id="user-add-btn" type="submit" class="btn">Add user</button>
+                        </form>
+                        <p id="user-message" class="hint" role="status"></p>
+                        <p id="auth-warning" class="notice notice-warn" hidden>Without HTTPS, usernames and passwords cross the network unencrypted. Turn on HTTPS above.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Allowed devices -->
+            <section class="group">
+                <h2>Allowed devices</h2>
+                <div class="group-body">
+                    <label class="choice">
+                        <input type="checkbox" id="access-enabled">
+                        <span>Only accept connections from these devices</span>
+                    </label>
+
+                    <div id="access-fields" class="subfields">
+                        <textarea id="allowed-clients" rows="4" spellcheck="false" aria-label="Allowed devices"></textarea>
+                        <p class="hint">One per line: <span class="mono">self</span> for this computer, an IP address, a range such as <span class="mono">192.168.1.0/24</span>, or a device name such as <span class="mono">macbook-air</span>. Everything else is disconnected before it reaches the server.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Advanced -->
+            <section class="group">
+                <h2>Advanced</h2>
+                <div class="group-body">
+                    <div class="field">
+                        <label for="dir-cache-time">Folder listing cache</label>
+                        <input type="text" id="dir-cache-time" class="narrow" spellcheck="false" placeholder="5s">
+                        <p class="hint">How long rclone remembers a folder's contents, such as <span class="mono">5s</span> or <span class="mono">5m</span>. Files Eagle adds show up on other devices after this long.</p>
+                    </div>
+
+                    <label class="choice">
+                        <input type="checkbox" id="follow-symlinks">
+                        <span>Follow symbolic links</span>
+                    </label>
+
+                    <div class="field">
+                        <label for="rclone-path">rclone</label>
+                        <div class="field-row">
+                            <input type="text" id="rclone-path" spellcheck="false" placeholder="Found automatically">
+                            <button id="rclone-browse-btn" type="button" class="btn">Browse…</button>
+                        </div>
+                        <p id="rclone-info" class="hint"></p>
+                        <div class="actions">
+                            <button id="rclone-update-btn" type="button" class="btn btn-quiet">Download the latest rclone</button>
+                            <button id="data-folder-btn" type="button" class="btn btn-quiet">Open settings folder</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Log -->
+            <section class="group">
+                <h2>Log</h2>
+                <div class="group-body">
+                    <details id="log-details" class="disclosure">
+                        <summary>Show what the server has reported</summary>
+                        <pre id="log-output" class="log" tabindex="0"></pre>
+                    </details>
+                </div>
+            </section>
+        </main>
+
+        <!-- Unsaved changes bar -->
+        <footer id="save-bar" class="save-bar" hidden>
+            <span id="save-message">Unsaved changes</span>
+            <div class="actions">
+                <button id="discard-btn" type="button" class="btn">Discard</button>
+                <button id="save-btn" type="button" class="btn btn-primary">Save</button>
+            </div>
+        </footer>
+    </div>
+
+    <script src="js/config.js"></script>
+    <script src="js/network.js"></script>
+    <script src="js/access-filter.js"></script>
+    <script src="js/htpasswd.js"></script>
+    <script src="js/cert.js"></script>
+    <script src="js/rclone.js"></script>
+    <script src="js/server.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

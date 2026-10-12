@@ -1,0 +1,27 @@
+{
+    "id": "a0d93ac6-639c-46b6-8538-46b36b7c47e7",
+    "version": "1.0.0",
+    "platform": "all",
+    "arch": "all",
+    "name": "Eagle Serve",
+    "description": "Serve your Eagle library over WebDAV with rclone, to this computer, your LAN, or your Tailscale network.",
+    "logo": "/logo.png",
+    "keywords": [
+        "webdav",
+        "server",
+        "rclone",
+        "share",
+        "sync",
+        "tailscale",
+        "lan"
+    ],
+    "devTools": true,
+    "main": {
+        "serviceMode": true,
+        "url": "index.html",
+        "width": 720,
+        "height": 700,
+        "minWidth": 480,
+        "minHeight": 420
+    }
+}

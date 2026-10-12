@@ -1,0 +1,87 @@
+name: Build and Release
+
+# Every push to main and every pull request: run the tests and build the
+# .eagleplugin package, kept as a downloadable workflow artifact.
+# Pushing a version tag (v1.0.0) additionally publishes a GitHub release
+# with the package attached.
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Test and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Fail before building if the tag and the plugin version disagree
+      - name: Check tag matches manifest version
+        if: github.ref_type == 'tag'
+        run: |
+          version=$(node -p "require('./manifest.json').version")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match manifest.json version $version"
+            exit 1
+          fi
+
+      # Installs the pnpm version pinned by "packageManager" in package.json
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      # The runtime dependencies get packed into the plugin, so they must be present
+      - run: pnpm install --frozen-lockfile
+
+      # The integration tests need a real rclone; let them fetch the official build
+      - run: pnpm test
+        env:
+          EAGLE_SERVE_TEST_DOWNLOAD_RCLONE: '1'
+
+      - run: pnpm build
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: eagleplugin
+          path: dist/*.eagleplugin
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: eagleplugin
+          path: dist
+
+      # Uses this version's section of RELEASE_NOTES.md (or CHANGELOG.md);
+      # falls back to GitHub's auto-generated notes when there is none.
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if node scripts/release-notes.js "$GITHUB_REF_NAME" > notes.md; then
+            notes=(--notes-file notes.md)
+          else
+            notes=(--generate-notes)
+          fi
+          gh release create "$GITHUB_REF_NAME" dist/*.eagleplugin \
+            --title "Eagle Serve $GITHUB_REF_NAME" \
+            --verify-tag \
+            "${notes[@]}"

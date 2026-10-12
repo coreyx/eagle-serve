@@ -1,0 +1,14 @@
+{
+    "name": "eagle-serve",
+    "private": true,
+    "description": "Serve your Eagle library over WebDAV with rclone, to this computer, your LAN, or your Tailscale network.",
+    "license": "MIT",
+    "packageManager": "pnpm@12.6.0",
+    "scripts": {
+        "build": "node scripts/build-release.js",
+        "test": "node test/test-runner.js"
+    },
+    "dependencies": {
+        "bcryptjs": "^3.0.3"
+    }
+}
