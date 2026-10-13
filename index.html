@@ -15,6 +15,7 @@
                 <div class="status-text">
                     <h1 id="status-title">Server is stopped</h1>
                     <p id="status-detail" class="path"></p>
+                    <p id="status-path" class="hint" hidden></p>
                 </div>
                 <button id="toggle-btn" type="button" class="btn btn-primary">Start server</button>
             </div>
@@ -43,6 +44,20 @@
                         <span>
                             The library open in Eagle
                             <span id="library-path" class="hint path"></span>
+                        </span>
+                    </label>
+                    <label id="library-name-row" class="choice indent">
+                        <input type="checkbox" id="library-name-in-url">
+                        <span>
+                            Put the library name in the address
+                            <span id="library-name-hint" class="hint"></span>
+                        </span>
+                    </label>
+                    <label id="item-links-row" class="choice indent">
+                        <input type="checkbox" id="item-links-enabled">
+                        <span>
+                            Give every item an address by its ID
+                            <span class="hint"><span class="mono">/item/&lt;item ID&gt;</span> opens an item's file and <span class="mono">/thumbnail/&lt;item ID&gt;</span> its thumbnail, whatever the file or the library is called. Connections then pass through Eagle Serve on their way to rclone.</span>
                         </span>
                     </label>
                     <label class="choice">
@@ -96,7 +111,7 @@
                     <div class="field">
                         <label for="extra-hosts">Other addresses</label>
                         <input type="text" id="extra-hosts" spellcheck="false" placeholder="None">
-                        <p class="hint">Extra addresses of this computer to listen on, separated by commas. <span class="mono">0.0.0.0</span> listens on every network interface.</p>
+                        <p class="hint">Extra addresses or names of this computer to listen on, separated by commas. <span class="mono">0.0.0.0</span> listens on every network interface. The computer's own name already works once Local network or Tailscale is on.</p>
                     </div>
 
                     <p id="open-warning" class="notice notice-warn" hidden></p>
@@ -239,6 +254,7 @@
     <script src="js/config.js"></script>
     <script src="js/network.js"></script>
     <script src="js/access-filter.js"></script>
+    <script src="js/gateway.js"></script>
     <script src="js/htpasswd.js"></script>
     <script src="js/cert.js"></script>
     <script src="js/rclone.js"></script>

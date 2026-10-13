@@ -60,6 +60,8 @@
         return {
             storageMode: $('storage-custom').checked ? 'custom' : 'library',
             storagePath: $('storage-path').value,
+            libraryNameInUrl: $('library-name-in-url').checked,
+            itemLinksEnabled: $('item-links-enabled').checked,
             autoStart: $('auto-start').checked,
             readOnly: $('read-only').checked,
             port: $('port').value,
@@ -82,6 +84,8 @@
         $('storage-library').checked = config.storageMode !== 'custom';
         $('storage-custom').checked = config.storageMode === 'custom';
         $('storage-path').value = config.storagePath;
+        $('library-name-in-url').checked = config.libraryNameInUrl;
+        $('item-links-enabled').checked = config.itemLinksEnabled;
         $('auto-start').checked = config.autoStart;
         $('read-only').checked = config.readOnly;
         $('port').value = config.port;
@@ -117,6 +121,8 @@
         const form = ConfigManager.sanitize(readForm());
 
         $('storage-custom-row').hidden = form.storageMode !== 'custom';
+        $('library-name-row').hidden = form.storageMode === 'custom';
+        $('item-links-row').hidden = form.storageMode === 'custom';
         toggleSection('https-fields', form.httpsEnabled);
         toggleSection('auth-fields', form.authEnabled);
         toggleSection('access-fields', form.accessRestrictionEnabled);
@@ -178,6 +184,11 @@
         }[state.status];
         $('status-title').textContent = title;
         $('status-detail').textContent = state.status === 'running' ? state.storagePath : '';
+        const notes = [];
+        if (state.urlPath !== '/') notes.push(`Its files are under ${decodeURIComponent(state.urlPath)} at each address.`);
+        if (state.itemLinks) notes.push('Every item also answers at /item/<item ID> and /thumbnail/<item ID>.');
+        $('status-path').hidden = state.status !== 'running' || notes.length === 0;
+        $('status-path').textContent = notes.join(' ');
 
         const toggle = $('toggle-btn');
         toggle.textContent = state.status === 'running' ? 'Stop server' : 'Start server';
@@ -222,6 +233,8 @@
 
     function renderLibrary() {
         $('library-path').textContent = libraryPath || 'No library is open.';
+        const folder = path.basename(libraryPath) || 'Name.library';
+        $('library-name-hint').textContent = `Files are served under /${folder}/, so a link keeps meaning this library whichever one is open. Off serves them at the top level.`;
     }
 
     function renderNetwork() {

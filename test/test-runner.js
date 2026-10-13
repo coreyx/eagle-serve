@@ -11,6 +11,7 @@ const zlib = require('zlib');
 const ConfigManager = require('../js/config.js');
 const NetworkInfo = require('../js/network.js');
 const AccessFilter = require('../js/access-filter.js');
+const ItemGateway = require('../js/gateway.js');
 const HtpasswdManager = require('../js/htpasswd.js');
 const CertManager = require('../js/cert.js');
 const RcloneManager = require('../js/rclone.js');
@@ -97,6 +98,9 @@ async function runTests() {
     const defaults = ConfigManager.getConfig();
     assert.strictEqual(defaults.autoStart, true);
     assert.strictEqual(defaults.storageMode, 'library');
+    assert.strictEqual(defaults.libraryNameInUrl, true);
+    assert.strictEqual(defaults.itemLinksEnabled, false);
+    assert.strictEqual(defaults.readOnly, true, 'A new install cannot change the library until asked to');
     assert.strictEqual(defaults.port, 41599);
     assert.strictEqual(defaults.bindLan, false);
     assert.strictEqual(defaults.bindTailscale, false);
@@ -169,6 +173,17 @@ async function runTests() {
         { url: 'https://100.123.248.46:41599/', label: 'Tailscale' },
         { url: 'https://desktop.example.ts.net:41599/', label: 'Tailscale name' }
     ]);
+    // The computer name is offered once the server is reachable beyond this machine
+    const named = NetworkInfo.buildUrls(['127.0.0.1', '192.168.1.5'], 41599, false,
+        { addresses, hostname: 'eagle-host', names: ['Eagle-Host', 'files.example.com'] });
+    assert.deepStrictEqual(named, [
+        { url: 'http://127.0.0.1:41599/', label: 'This computer' },
+        { url: 'http://eagle-host:41599/', label: 'Computer name' },
+        { url: 'http://192.168.1.5:41599/', label: 'Local network' },
+        { url: 'http://files.example.com:41599/', label: 'Custom name' }
+    ]);
+    assert.deepStrictEqual(NetworkInfo.buildUrls(['127.0.0.1'], 41599, false, { addresses, hostname: 'eagle-host' }),
+        [{ url: 'http://127.0.0.1:41599/', label: 'This computer' }], 'No name is offered for a localhost-only server');
     console.log('   ✓ NetworkInfo tests passed.');
 
     // 3. Test AccessFilter rules
@@ -301,6 +316,14 @@ async function runTests() {
         assert.ok(!plainArgs.includes(flag), `${flag} is only passed when configured`);
     }
     assert.strictEqual(RcloneManager.formatAddr('::1', 8080), '[::1]:8080');
+
+    // A mount name serves the folder one level down through the combine backend
+    const mounted = { storagePath: storageDir, mountName: 'My "Best" Stuff.library', addrs: ['127.0.0.1:1'] };
+    assert.strictEqual(RcloneManager.buildArgs(mounted)[2], ':combine:');
+    assert.ok(!RcloneManager.buildArgs(mounted).includes(storageDir), 'The folder is passed through the environment instead');
+    assert.deepStrictEqual(RcloneManager.buildEnv(mounted),
+        { RCLONE_COMBINE_UPSTREAMS: `"My ""Best"" Stuff.library=${storageDir}"` });
+    assert.deepStrictEqual(RcloneManager.buildEnv({ storagePath: storageDir }), {});
     assert.strictEqual(RcloneManager.archiveName('1.68.2', 'win32', 'x64'), 'rclone-v1.68.2-windows-amd64.zip');
     assert.strictEqual(RcloneManager.archiveName('1.68.2', 'darwin', 'arm64'), 'rclone-v1.68.2-osx-arm64.zip');
     assert.throws(() => RcloneManager.archiveName('1.68.2', 'sunos', 'x64'));
@@ -312,6 +335,59 @@ async function runTests() {
     await assert.rejects(RcloneManager.extractZipEntry(Buffer.from('not a zip at all, just some text'), () => true));
     assert.strictEqual(await RcloneManager.isRcloneProcess(process.pid), false, 'The test process is not rclone');
     console.log('   ✓ RcloneManager tests passed.');
+
+    // 6b. Test ItemGateway address parsing and ID resolution
+    console.log('6b. Testing ItemGateway...');
+    const original = { kind: 'item', id: 'MV63BVOWOZLV6' };
+    const thumb = { kind: 'thumbnail', id: 'MV63BVOWOZLV6' };
+    assert.deepStrictEqual(ItemGateway.parseItemRequest('/item/MV63BVOWOZLV6'), original);
+    assert.deepStrictEqual(ItemGateway.parseItemRequest('/item/MV63BVOWOZLV6/Dalaran%20at%20sunset.png'), original);
+    assert.deepStrictEqual(ItemGateway.parseItemRequest('/item/MV63BVOWOZLV6?download=1'), original);
+    assert.deepStrictEqual(ItemGateway.parseItemRequest('/item?id=MV63BVOWOZLV6'), original, "Eagle's own link shape");
+    assert.deepStrictEqual(ItemGateway.parseItemRequest('/item'), { kind: 'item', id: '' });
+    assert.deepStrictEqual(ItemGateway.parseItemRequest('/item/'), { kind: 'item', id: '' });
+    assert.deepStrictEqual(ItemGateway.parseItemRequest('/thumbnail/MV63BVOWOZLV6'), thumb);
+    assert.deepStrictEqual(ItemGateway.parseItemRequest('/thumbnail/MV63BVOWOZLV6/Dalaran.png'), thumb);
+    assert.deepStrictEqual(ItemGateway.parseItemRequest('/thumbnail?id=MV63BVOWOZLV6'), thumb);
+    assert.deepStrictEqual(ItemGateway.parseItemRequest('/thumbnail/'), { kind: 'thumbnail', id: '' });
+    assert.strictEqual(ItemGateway.parseItemRequest('/thumbnails/MV63BVOWOZLV6'), null);
+    assert.strictEqual(ItemGateway.parseItemRequest('/items/MV63BVOWOZLV6'), null);
+    assert.strictEqual(ItemGateway.parseItemRequest('/Main.library/images/MV63BVOWOZLV6.info/a.png'), null);
+    assert.strictEqual(ItemGateway.parseItemRequest('/'), null);
+
+    const itemId = 'MV63BVOWOZLV6';
+    const itemLibrary = path.join(tempDir, 'items.library');
+    const itemDir = path.join(itemLibrary, 'images', `${itemId}.info`);
+    fs.mkdirSync(itemDir, { recursive: true });
+    fs.writeFileSync(path.join(itemDir, 'Dalaran at sunset.png'), 'original image');
+    fs.writeFileSync(path.join(itemDir, 'Dalaran at sunset_thumbnail.png'), 'thumbnail');
+    fs.writeFileSync(path.join(itemDir, 'metadata.json'), JSON.stringify({ id: itemId, name: 'Dalaran at sunset', ext: 'png' }));
+    // Other plugins keep their own files beside the item (Extra Links does)
+    fs.writeFileSync(path.join(itemDir, 'extra-links.json'), '[]');
+    assert.strictEqual(await ItemGateway.resolveItemFile(itemLibrary, itemId), 'Dalaran at sunset.png');
+    assert.strictEqual(await ItemGateway.resolveItemFile(itemLibrary, itemId, 'thumbnail'), 'Dalaran at sunset_thumbnail.png');
+    assert.strictEqual(await ItemGateway.resolveItemFile(itemLibrary, 'NOSUCHITEM001'), null);
+    assert.strictEqual(await ItemGateway.resolveItemFile(itemLibrary, 'NOSUCHITEM001', 'thumbnail'), null);
+
+    // Eagle makes no thumbnail for a small image; its thumbnail address answers with the image
+    const smallId = 'SMALL00000001';
+    const smallDir = path.join(itemLibrary, 'images', `${smallId}.info`);
+    fs.mkdirSync(smallDir);
+    fs.writeFileSync(path.join(smallDir, 'icon.png'), 'small image');
+    fs.writeFileSync(path.join(smallDir, 'metadata.json'), JSON.stringify({ id: smallId, name: 'icon', ext: 'png' }));
+    assert.strictEqual(await ItemGateway.resolveItemFile(itemLibrary, smallId, 'thumbnail'), 'icon.png');
+    assert.strictEqual(await ItemGateway.resolveItemFile(itemLibrary, '..'), null, 'Only item IDs are looked up');
+    assert.strictEqual(await ItemGateway.resolveItemFile(itemLibrary, `${itemId}/../${itemId}`), null);
+
+    // Metadata that has fallen behind the folder: use the file that is really there
+    fs.writeFileSync(path.join(itemDir, 'metadata.json'), JSON.stringify({ id: itemId, name: 'An older name', ext: 'png' }));
+    assert.strictEqual(await ItemGateway.resolveItemFile(itemLibrary, itemId), 'Dalaran at sunset.png');
+    assert.strictEqual(await ItemGateway.resolveItemFile(itemLibrary, itemId, 'thumbnail'), 'Dalaran at sunset_thumbnail.png');
+    fs.writeFileSync(path.join(itemDir, 'metadata.json'), 'not json');
+    assert.strictEqual(await ItemGateway.resolveItemFile(itemLibrary, itemId), 'Dalaran at sunset.png', 'Sidecar files are never taken for the item');
+    assert.strictEqual(await ItemGateway.resolveItemFile(itemLibrary, itemId, 'thumbnail'), 'Dalaran at sunset_thumbnail.png');
+    fs.writeFileSync(path.join(itemDir, 'metadata.json'), JSON.stringify({ id: itemId, name: 'Dalaran at sunset', ext: 'png' }));
+    console.log('   ✓ ItemGateway tests passed.');
 
     // 7. Test ServerManager failure reporting (no rclone needed)
     console.log('7. Testing ServerManager start validation...');
@@ -350,7 +426,8 @@ async function runTests() {
             storageMode: 'custom',
             storagePath: storageDir,
             rclonePath,
-            port
+            port,
+            readOnly: false
         };
         const startWith = async overrides => {
             ConfigManager.saveConfig({ ...baseConfig, ...overrides });
@@ -390,6 +467,24 @@ async function runTests() {
             }
             console.log(`   ✓ Listens on ${state.hosts.join(', ')} together.`);
         }
+
+        // 8a3. This computer's own name in "Other addresses" resolves to addresses the
+        // LAN and Tailscale options already bind; they must not be bound twice
+        const ownName = os.hostname();
+        const ownRecords = await require('dns').promises.lookup(ownName, { all: true }).catch(() => []);
+        if (ownRecords.some(record => record.family === 4)) {
+            state = await startWith({ bindLan: true, bindTailscale: true, extraHosts: [ownName] });
+            assert.strictEqual(state.status, 'running', state.error || '');
+            assert.strictEqual(new Set(state.hosts).size, state.hosts.length, 'No address is bound twice');
+            assert.ok(state.hosts.every(host => net.isIP(host)), 'Names are resolved to addresses before binding');
+            assert.ok(state.urls.some(entry => entry.url === `http://${ownName.toLowerCase()}:${port}/`), 'The name is listed as an address');
+            assert.strictEqual((await request(`http://${ownName}:${port}/metadata.json`)).status, 200, `Reachable as ${ownName}`);
+            console.log(`   ✓ Listening on the computer name ${ownName} works alongside the network options.`);
+        }
+
+        state = await startWith({ extraHosts: ['no-such-host.invalid'] });
+        assert.strictEqual(state.errorCode, 'BAD_HOST', 'A name that does not resolve is reported as such');
+        assert.match(state.error, /no-such-host\.invalid/);
 
         // 8b. A second server on the same port reports the conflict
         const blocker = net.createServer().listen(0, '127.0.0.1');
@@ -464,12 +559,135 @@ async function runTests() {
         ServerManager.init({ getLibraryPath: async () => openLibrary });
         state = await startWith({ storageMode: 'library', storagePath: '' });
         assert.strictEqual(state.storagePath, storageDir);
+
+        // The library sits under its own folder name, and the root lists it
+        assert.strictEqual(state.urlPath, '/library/');
+        assert.strictEqual((await request(`${base}/library/metadata.json`)).body, '{"folders":[]}');
+        assert.strictEqual((await request(`${base}/metadata.json`)).status, 404);
+        const rootListing = await request(`${base}/`, { method: 'PROPFIND', headers: { Depth: '1' } });
+        assert.strictEqual(rootListing.status, 207);
+        assert.ok(rootListing.body.includes('/library/'));
+        assert.strictEqual((await request(`${base}/library/via-prefix.txt`, { method: 'PUT', body: 'prefixed' })).status, 201);
+        assert.strictEqual(fs.readFileSync(path.join(storageDir, 'via-prefix.txt'), 'utf8'), 'prefixed');
+
+        // Symbolic links are still followed when the library is mounted by name
+        fs.writeFileSync(path.join(tempDir, 'outside.txt'), 'linked content');
+        let linked = true;
+        try {
+            fs.symlinkSync(path.join(tempDir, 'outside.txt'), path.join(otherLibrary, 'link.txt'));
+        } catch {
+            linked = false; // creating symlinks needs extra rights on Windows
+        }
+
         openLibrary = otherLibrary;
         await ServerManager.checkForChanges();
         await ServerManager.start();
         assert.strictEqual(ServerManager.getState().storagePath, otherLibrary);
+        assert.strictEqual(ServerManager.getState().urlPath, '/other.library/');
+        assert.strictEqual((await request(`${base}/other.library/metadata.json`)).body, '{"other":true}');
+        assert.strictEqual((await request(`${base}/library/metadata.json`)).status, 404, 'The previous library no longer answers');
+        if (linked) {
+            assert.strictEqual((await request(`${base}/other.library/link.txt`)).body, 'linked content');
+        }
+
+        // With the option off, the library is served at the top level
+        state = await startWith({ storageMode: 'library', storagePath: '', libraryNameInUrl: false });
+        assert.strictEqual(state.urlPath, '/');
         assert.strictEqual((await request(`${base}/metadata.json`)).body, '{"other":true}');
+        assert.strictEqual((await request(`${base}/other.library/metadata.json`)).status, 404);
         console.log('   ✓ Switching the Eagle library re-serves the new one.');
+
+        // 8g2. Item links: an address by ID alone, with everything else passing through
+        openLibrary = itemLibrary;
+        const itemFile = '/items.library/images/MV63BVOWOZLV6.info/Dalaran%20at%20sunset.png';
+        state = await startWith({ storageMode: 'library', storagePath: '', itemLinksEnabled: true, dirCacheTime: '1s' });
+        assert.strictEqual(state.status, 'running', state.error || '');
+        assert.strictEqual(state.itemLinks, true);
+        assert.strictEqual(state.urlPath, '/items.library/');
+
+        const byId = await request(`${base}/item/${itemId}`);
+        assert.strictEqual(byId.status, 200);
+        assert.strictEqual(byId.body, 'original image');
+        assert.strictEqual(byId.headers['content-type'], 'image/png');
+        assert.strictEqual((await request(`${base}/item/${itemId}/any%20name%20at%20all.png`)).body, 'original image');
+        assert.strictEqual((await request(`${base}/item?id=${itemId}`)).body, 'original image');
+        const headById = await request(`${base}/item/${itemId}`, { method: 'HEAD' });
+        assert.strictEqual(headById.status, 200);
+        assert.strictEqual(headById.headers['content-length'], '14');
+        assert.strictEqual((await request(`${base}/item/NOSUCHITEM001`)).status, 404);
+
+        // The thumbnail has its own address by ID
+        assert.strictEqual((await request(`${base}/thumbnail/${itemId}`)).body, 'thumbnail');
+        assert.strictEqual((await request(`${base}/thumbnail/${itemId}/any-name.png`)).body, 'thumbnail');
+        assert.strictEqual((await request(`${base}/thumbnail?id=${itemId}`)).body, 'thumbnail');
+        assert.strictEqual((await request(`${base}/thumbnail/SMALL00000001`)).body, 'small image', 'No thumbnail: the image itself');
+        assert.strictEqual((await request(`${base}/thumbnail/NOSUCHITEM001`)).status, 404);
+        assert.strictEqual((await request(`${base}/thumbnail/${itemId}`, { method: 'DELETE' })).status, 405);
+        assert.strictEqual((await request(`${base}/item/..%2F..%2Fmetadata.json`)).status, 404);
+        assert.strictEqual((await request(`${base}/item`)).status, 404);
+        assert.strictEqual((await request(`${base}/item/${itemId}`, { method: 'PUT', body: 'x' })).status, 405);
+        assert.strictEqual(fs.readFileSync(path.join(itemDir, 'Dalaran at sunset.png'), 'utf8'), 'original image');
+
+        // The ordinary addresses and every WebDAV verb still work through the gateway
+        assert.strictEqual((await request(`${base}${itemFile}`)).body, 'original image');
+        assert.strictEqual((await request(`${base}/`, { method: 'PROPFIND', headers: { Depth: '1' } })).status, 207);
+        const big = crypto.randomBytes(3 * 1024 * 1024).toString('hex');
+        assert.strictEqual((await request(`${base}/items.library/big.txt`, { method: 'PUT', body: big })).status, 201);
+        assert.strictEqual(fs.statSync(path.join(itemLibrary, 'big.txt')).size, big.length);
+        assert.ok((await request(`${base}/items.library/big.txt`)).body === big, 'A 6 MB file survives the round trip');
+        const ranged = await request(`${base}/items.library/big.txt`, { headers: { Range: 'bytes=1000-1999' } });
+        assert.strictEqual(ranged.status, 206);
+        assert.strictEqual(ranged.body, big.substring(1000, 2000));
+        assert.strictEqual((await request(`${base}/items.library/moved/`, { method: 'MKCOL' })).status, 201);
+        const move = await request(`${base}/items.library/big.txt`, { method: 'MOVE', headers: { Destination: `${base}/items.library/moved/big.txt` } });
+        assert.strictEqual(move.status, 201);
+        assert.ok(fs.existsSync(path.join(itemLibrary, 'moved', 'big.txt')));
+        assert.strictEqual((await request(`${base}/items.library/moved/`, { method: 'DELETE' })).status, 204);
+        assert.ok(!fs.existsSync(path.join(itemLibrary, 'moved')));
+
+        // Renaming the item in Eagle renames its file; the ID address follows it
+        fs.renameSync(path.join(itemDir, 'Dalaran at sunset.png'), path.join(itemDir, 'Heroes overlooking Dalaran.png'));
+        fs.renameSync(path.join(itemDir, 'Dalaran at sunset_thumbnail.png'), path.join(itemDir, 'Heroes overlooking Dalaran_thumbnail.png'));
+        fs.writeFileSync(path.join(itemDir, 'metadata.json'), JSON.stringify({ id: itemId, name: 'Heroes overlooking Dalaran', ext: 'png' }));
+        await new Promise(resolve => setTimeout(resolve, 1500)); // let rclone's folder listing cache expire
+        assert.strictEqual((await request(`${base}/item/${itemId}`)).body, 'original image', 'The ID address survives a rename');
+        assert.strictEqual((await request(`${base}/thumbnail/${itemId}`)).body, 'thumbnail', 'So does the thumbnail address');
+        assert.strictEqual((await request(`${base}${itemFile}`)).status, 404, 'The address by file name does not');
+        console.log('   ✓ Item links resolve by ID, survive a rename, and pass WebDAV through.');
+
+        // With HTTPS, sign-in and allowed devices all on, the gateway terminates TLS,
+        // checks the client, and rclone still does the sign-in
+        state = await startWith({
+            storageMode: 'library', storagePath: '', itemLinksEnabled: true,
+            httpsEnabled: true, certPath: certFiles.certPath, keyPath: certFiles.keyPath,
+            authEnabled: true, accessRestrictionEnabled: true, allowedClients: ['self']
+        });
+        assert.strictEqual(state.status, 'running', state.error || '');
+        const secureBase = `https://127.0.0.1:${port}`;
+        const trusted = { ca: fs.readFileSync(certFiles.certPath) };
+        assert.strictEqual((await request(`${secureBase}/item/${itemId}`, trusted)).status, 401, 'Item links ask for sign-in too');
+        const signedIn = await request(`${secureBase}/item/${itemId}`, { ...trusted, ...basic('corey:correct horse') });
+        assert.strictEqual(signedIn.status, 200);
+        assert.strictEqual(signedIn.body, 'original image');
+        assert.strictEqual((await request(`${secureBase}/items.library/metadata.json`, { ...trusted, ...basic('corey:wrong') })).status, 401);
+
+        state = await startWith({
+            storageMode: 'library', storagePath: '', itemLinksEnabled: true,
+            httpsEnabled: true, certPath: certFiles.certPath, keyPath: certFiles.keyPath,
+            accessRestrictionEnabled: true, allowedClients: ['203.0.113.9']
+        });
+        assert.strictEqual(state.status, 'running', state.error || '');
+        await assert.rejects(request(`${secureBase}/item/${itemId}`, trusted), 'A client that is not allowed is dropped before TLS');
+
+        // At the top level (no library name), item links work the same way
+        state = await startWith({ storageMode: 'library', storagePath: '', itemLinksEnabled: true, libraryNameInUrl: false });
+        assert.strictEqual((await request(`${base}/item/${itemId}`)).body, 'original image');
+        assert.strictEqual((await request(`${base}/images/${itemId}.info/Heroes%20overlooking%20Dalaran.png`)).body, 'original image');
+
+        // A folder that is not a library gets no item links
+        state = await startWith({ itemLinksEnabled: true });
+        assert.strictEqual(state.itemLinks, false);
+        console.log('   ✓ Item links work with HTTPS, sign-in and allowed devices.');
 
         // 8h. Stop frees the port and removes the PID file
         const servingPid = ServerManager.getState().pid;

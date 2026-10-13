@@ -98,7 +98,11 @@ const NetworkInfo = (() => {
      * @param {string[]} hosts
      * @param {number} port
      * @param {boolean} https
-     * @param {{ addresses?: ReturnType<typeof listAddresses>, tailscaleName?: string }} [info]
+     * @param {object} [info]
+     * @param {ReturnType<typeof listAddresses>} [info.addresses]
+     * @param {string} [info.tailscaleName] - MagicDNS name of this computer.
+     * @param {string} [info.hostname] - This computer's name.
+     * @param {string[]} [info.names] - Other names the user asked to listen on.
      * @returns {{ url: string, label: string }[]}
      */
     function buildUrls(hosts, port, https, info = {}) {
@@ -106,10 +110,15 @@ const NetworkInfo = (() => {
         const scheme = https ? 'https' : 'http';
         const urlFor = host => `${scheme}://${host.includes(':') ? `[${host}]` : host}:${port}/`;
         const urls = [];
+        const add = (host, label) => {
+            const url = urlFor(host);
+            if (!urls.some(entry => entry.url === url)) urls.push({ url, label });
+        };
 
         const expanded = hosts.includes('0.0.0.0')
             ? ['127.0.0.1', ...addresses.filter(a => a.kind !== 'other').map(a => a.address)]
             : hosts;
+        const shared = expanded.some(host => host !== '127.0.0.1');
 
         for (const host of expanded) {
             const known = addresses.find(a => a.address === host);
@@ -117,12 +126,18 @@ const NetworkInfo = (() => {
             if (host === '127.0.0.1') label = 'This computer';
             else if (known && known.kind === 'tailscale') label = 'Tailscale';
             else if (known && known.kind === 'lan') label = 'Local network';
-            urls.push({ url: urlFor(host), label });
+            add(host, label);
 
+            // Other devices find this computer by name on whichever network they share with it
+            if (host === '127.0.0.1' && shared && info.hostname) {
+                add(info.hostname, 'Computer name');
+            }
             if (known && known.kind === 'tailscale' && info.tailscaleName) {
-                urls.push({ url: urlFor(info.tailscaleName), label: 'Tailscale name' });
+                add(info.tailscaleName, 'Tailscale name');
             }
         }
+
+        for (const name of info.names || []) add(name.toLowerCase(), 'Custom name');
         return urls;
     }
 

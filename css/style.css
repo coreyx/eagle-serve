@@ -175,6 +175,10 @@ ul {
     color: var(--text-secondary);
 }
 
+.status-text .hint {
+    margin-top: 2px;
+}
+
 .lamp {
     flex: none;
     width: 10px;

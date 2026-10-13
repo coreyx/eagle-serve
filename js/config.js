@@ -15,6 +15,10 @@ const ConfigManager = (() => {
         // 'library' serves the library currently open in Eagle, 'custom' serves storagePath
         storageMode: 'library',
         storagePath: '',
+        // In library mode, serve the library as /<Name>.library/ instead of at the root
+        libraryNameInUrl: true,
+        // In library mode, also answer at /item/<ID> and /thumbnail/<ID> through the item link gateway
+        itemLinksEnabled: false,
         port: 41599,
         // 127.0.0.1 is always bound; these add the LAN and Tailscale addresses
         bindLan: false,
@@ -27,7 +31,8 @@ const ConfigManager = (() => {
         accessRestrictionEnabled: false,
         allowedClients: ['self'],
         dirCacheTime: '5s',
-        readOnly: false,
+        // Eagle does not expect its library to change underneath it, so writing is opt-in
+        readOnly: true,
         followSymlinks: true,
         // Empty = find rclone automatically
         rclonePath: ''
@@ -72,6 +77,8 @@ const ConfigManager = (() => {
         config.autoStart = Boolean(raw.autoStart);
         config.storageMode = raw.storageMode === 'custom' ? 'custom' : 'library';
         config.storagePath = typeof raw.storagePath === 'string' ? raw.storagePath.trim() : '';
+        config.libraryNameInUrl = Boolean(raw.libraryNameInUrl);
+        config.itemLinksEnabled = Boolean(raw.itemLinksEnabled);
 
         const port = parseInt(raw.port, 10);
         config.port = (isNaN(port) || port < 1 || port > 65535) ? DEFAULT_CONFIG.port : port;

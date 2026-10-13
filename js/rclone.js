@@ -101,6 +101,7 @@ const RcloneManager = (() => {
      * Builds the argument list for "rclone serve webdav".
      * @param {object} options
      * @param {string} options.storagePath - Folder to serve from the WebDAV root.
+     * @param {string} [options.mountName] - Serve the folder as /<mountName>/ instead of at the root.
      * @param {string[]} options.addrs - "host:port" addresses to listen on.
      * @param {string} [options.certPath]
      * @param {string} [options.keyPath]
@@ -111,8 +112,12 @@ const RcloneManager = (() => {
      * @returns {string[]}
      */
     function buildArgs(options) {
+        // A mount name moves the folder one level down, through rclone's combine
+        // backend; its upstream is handed over by buildEnv()
+        const source = options.mountName ? ':combine:' : options.storagePath;
+
         // No config file: the server only ever touches the local folder it is given
-        const args = ['serve', 'webdav', options.storagePath, '--config', IS_WINDOWS ? 'NUL' : '/dev/null'];
+        const args = ['serve', 'webdav', source, '--config', IS_WINDOWS ? 'NUL' : '/dev/null'];
 
         if (options.followSymlinks) args.push('-L');
         for (const addr of options.addrs) args.push('--addr', addr);
@@ -122,6 +127,20 @@ const RcloneManager = (() => {
         if (options.readOnly) args.push('--read-only');
 
         return args;
+    }
+
+    /**
+     * Environment variables rclone needs on top of the inherited ones.
+     * @param {{ storagePath: string, mountName?: string }} options
+     * @returns {Record<string, string>}
+     */
+    function buildEnv(options) {
+        if (!options.mountName) return {};
+
+        // One "dir=path" entry in rclone's space-separated, CSV-quoted list syntax.
+        // An environment variable avoids quoting it a second time for a connection string.
+        const upstream = `${options.mountName}=${options.storagePath}`.replace(/"/g, '""');
+        return { RCLONE_COMBINE_UPSTREAMS: `"${upstream}"` };
     }
 
     // --- Stale process cleanup ------------------------------------------------
@@ -288,6 +307,7 @@ const RcloneManager = (() => {
         getVersion,
         formatAddr,
         buildArgs,
+        buildEnv,
         isRcloneProcess,
         killIfRclone,
         extractZipEntry,

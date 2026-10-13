@@ -10,14 +10,15 @@ It is the plugin form of [webdav-server-kit](https://github.com/coreyx/webdav-se
 
 ## ✨ Features
 
-- **Starts with Eagle**: runs as a background service and serves the open library from the WebDAV root. Switch libraries in Eagle and the server follows.
+- **Starts with Eagle**: runs as a background service and serves the open library under its own folder name (`/Main.library/…`). Switch libraries in Eagle and the server follows.
 - **Pick who can reach it**: always available on this computer (`127.0.0.1`); tick **Local network** and **Tailscale** to also listen on those addresses, or add any other address by hand.
 - **Follows your network**: addresses that come and go (Wi-Fi reconnecting, Tailscale starting late) are picked up automatically and the server rebinds.
 - **HTTPS**: use your own certificate and key, or generate a self-signed one in the window. No OpenSSL needed.
 - **Sign-in**: usernames and passwords stored as bcrypt hashes in an `htpasswd` file. Add and remove users while the server is running.
 - **Allowed devices**: limit connections to `self`, specific IPs, CIDR ranges, or device names. Everything else is disconnected before it reaches rclone.
-- **Read-only mode**, configurable folder listing cache, and symbolic link support.
+- **Read-only by default**, with a configurable folder listing cache and symbolic link support.
 - **rclone handled for you**: finds an installed rclone, or downloads the official build (checksum-verified) with one click.
+- **Item links by ID** (optional): `/item/<item ID>` opens an item's file and `/thumbnail/<item ID>` its thumbnail, so a link survives the item or the library being renamed.
 - **Native look**: follows all six Eagle themes.
 
 ---
@@ -75,9 +76,50 @@ Any WebDAV client works. Use one of the addresses shown in the window:
 | rclone | `rclone config` with the `webdav` backend |
 | curl | `curl -u user:password https://host:41599/metadata.json` |
 
-The library is served from the root, so `https://host:41599/metadata.json` is the library's metadata and `https://host:41599/images/` holds the items.
+**Connecting by name.** With **Local network** or **Tailscale** on, the list includes this computer's name (for example `http://desktop:41599/`). You do not need to add the name under **Other addresses**: a name is looked up by the device that connects, and it leads to an address the server is already listening on. Tailscale devices resolve the short name through MagicDNS. On a plain local network it depends on the device; Apple devices usually need `desktop.local`.
 
-> **Writing to a library from outside Eagle.** Unless **Read-only** is on, connected devices can change and delete files in the library, and Eagle does not expect files to change underneath it. Turn **Read-only** on unless you have a specific reason to write.
+### Addresses inside the library
+
+The library is served under its folder name, so for a library called `Main`:
+
+```
+https://host:41599/                                         lists Main.library
+https://host:41599/Main.library/metadata.json               the library's metadata
+https://host:41599/Main.library/images/<item id>.info/<file>  one item's file
+```
+
+This is the layout [obsidian-eagle-bridge](https://github.com/coreyx/obsidian-eagle-bridge) builds its links from: set its **Custom URL prefix** to the server address (`https://host:41599`) and it adds the rest. Because the library name is part of every link, a link keeps meaning the same library after you switch libraries in Eagle; while another library is open it returns 404 instead of looking in the wrong one.
+
+Turn off **Put the library name in the address** to serve the library at the top level instead (`https://host:41599/metadata.json`). A folder chosen with **Another folder** is always served at the top level.
+
+### Item links by ID
+
+An address built from the file name breaks when the item is renamed in Eagle, and one that carries the library name breaks when the library is renamed. Turn on **Give every item an address by its ID** to also get an address that depends on neither:
+
+```
+https://host:41599/item/MV63BVOWOZLV6
+https://host:41599/item/MV63BVOWOZLV6/any-name-you-like.png
+https://host:41599/item?id=MV63BVOWOZLV6
+```
+
+All three open the item's original file. The second form ignores the name after the ID; it is there for readability and for clients that look at the extension. The third matches the shape of Eagle's own item links (`http://localhost:41595/item?id=…`), which open the item in Eagle rather than returning its file.
+
+Replace `item` with `thumbnail` for the small preview Eagle keeps beside the file, in the same three forms:
+
+```
+https://host:41599/thumbnail/MV63BVOWOZLV6
+```
+
+A thumbnail is always a PNG. Eagle does not make one for images that are already small, and for those the thumbnail address returns the file itself, so it is safe to use for every item.
+
+The ID is looked up in the library being served each time, from the item's `images/<ID>.info/metadata.json`, so it follows renames as they happen. Things to know:
+
+- Item links are read-only (`GET` and `HEAD`) and need the same sign-in as everything else.
+- An ID from a library that is not the one open in Eagle returns 404.
+- After a rename, the new file can take up to the folder listing cache time (5 seconds by default) to appear.
+- With this on, connections go through a small HTTP layer inside the plugin on their way to rclone (see [How It Works](#-how-it-works)). The ordinary WebDAV addresses keep working unchanged.
+
+> **Writing to a library from outside Eagle.** **Read-only** is on by default. With it off, connected devices can change and delete files in the library, including deleting the whole library folder in one request, and Eagle does not expect files to change underneath it. Turn it off only if you have a specific reason to write.
 
 ---
 
@@ -88,11 +130,13 @@ Every option of webdav-server-kit's `config.yaml` has a control in the window.
 | Setting | What it does | Default | `config.yaml` equivalent |
 | --- | --- | --- | --- |
 | **Folder** | Serve the library open in Eagle, or another folder you choose. | The open library | `storage_path` |
+| **Put the library name in the address** | Serve the open library as `/<Name>.library/` instead of at the top level. | On | — |
+| **Give every item an address by its ID** | Also answer at `/item/<item ID>` and `/thumbnail/<item ID>`, whatever the file or library is called. | Off | — |
 | **Start serving when Eagle starts** | Start the server automatically. | On | — |
-| **Read-only** | Other devices can read but not change the folder. | Off | — |
+| **Read-only** | Other devices can read but not change the folder. | On | — |
 | **Port** | TCP port to listen on. | `41599` | `port` |
 | **Reachable from** | `127.0.0.1` always; optionally the LAN and Tailscale addresses of this computer. | This computer only | `host` |
-| **Other addresses** | Extra addresses to listen on. `0.0.0.0` listens on every interface. | None | `host` |
+| **Other addresses** | Extra addresses or names to listen on. A name listens on every address it resolves to. `0.0.0.0` listens on every interface. | None | `host` |
 | **HTTPS** | Certificate and private key (PEM) for TLS. | Off | `cert_path`, `key_path` |
 | **Sign-in** | Require a username and password (HTTP Basic, bcrypt `htpasswd`). | Off | `htpasswd_path` |
 | **Allowed devices** | Only accept connections from the listed clients. | Off (`self` when on) | `allowed_clients` |
@@ -117,7 +161,7 @@ It holds `config.json`, the `htpasswd` file, generated certificates (`certs/`), 
 
 Turn on **Encrypt connections with HTTPS** and either browse to an existing PEM certificate and key, or open **Generate a self-signed certificate**.
 
-The generator pre-fills every name the server is reached by: `localhost`, `127.0.0.1`, `::1`, the computer name, its LAN and Tailscale addresses, and its Tailscale MagicDNS name. Add anything else you will type into a client. Clients ignore the certificate's Common Name and only check these Subject Alternative Names, so an address that is missing from the list will be rejected.
+The generator pre-fills every name the server is reached by: `localhost`, `127.0.0.1`, `::1`, the computer name (plain and with `.local`), its LAN and Tailscale addresses, and its Tailscale MagicDNS name. Add anything else you will type into a client. Clients ignore the certificate's Common Name and only check these Subject Alternative Names, so an address that is missing from the list will be rejected.
 
 The certificate is a 4096-bit RSA key signed with SHA-256, valid for one year, written to `certs/server.crt` and `certs/server.key` in the settings folder. The window shows what the current certificate covers and when it expires.
 
@@ -181,6 +225,7 @@ When this is on, rclone listens on a private loopback port and a small TCP filte
 - **Staying in sync**: every 10 seconds, and whenever Eagle reports a library switch, the plugin compares the open library and this computer's addresses with what the server is bound to, and restarts it if they differ.
 - **Clean shutdown**: rclone is stopped when Eagle exits. Its PID is also recorded in `server.pid`, so if Eagle is killed and leaves rclone behind, the next launch stops the leftover process (after checking that the PID really is rclone) before starting a new one.
 - **A port that is taken** is reported in the window before rclone is launched.
+- **Item links**: when they are on, rclone listens on a private loopback port over plain HTTP and the plugin's gateway owns the public port. The gateway terminates HTTPS, applies the allowed-devices check before the TLS handshake, rewrites `/item/<ID>` and `/thumbnail/<ID>` to the item's current file path, and forwards every request to rclone, which still does the sign-in and all the serving. When item links are off, the gateway is not in the path at all.
 
 ---
 
@@ -192,7 +237,7 @@ pnpm test
 
 Runs `test/test-runner.js`, which covers the settings validation, network address classification, access rules (IPs, CIDR ranges, `self`, DNS names), `htpasswd` management, the certificate generator (checked with Node's own X.509 parser) and the zip extractor used for the rclone download.
 
-With rclone available, it also runs integration tests against a real server on a temporary folder: upload, download, listing and delete, several listen addresses at once, a busy port, read-only mode, sign-in (including users added while running), HTTPS with a generated certificate, the access filter, library switching, and stale-process cleanup.
+With rclone available, it also runs integration tests against a real server on a temporary folder: upload, download, listing and delete, several listen addresses at once, a busy port, read-only mode, sign-in (including users added while running), HTTPS with a generated certificate, the access filter, library switching, item links by ID (including a rename, and with HTTPS, sign-in and allowed devices on), and stale-process cleanup.
 
 The integration tests use an installed rclone, or the path in `EAGLE_SERVE_RCLONE`. To have the test run download rclone when none is found (this is what CI does):
 
@@ -248,6 +293,7 @@ eagle-serve/
 │   ├── config.js                     # Settings defaults, validation and config.json persistence
 │   ├── network.js                    # LAN / Tailscale address discovery and bind address resolution
 │   ├── access-filter.js              # Allowed-devices rules and the filtering TCP proxy
+│   ├── gateway.js                    # Item links by ID: HTTP(S) front door that rewrites /item/<ID>
 │   ├── htpasswd.js                   # bcrypt htpasswd user management
 │   ├── cert.js                       # Self-signed certificate generator (pure Node crypto)
 │   ├── rclone.js                     # rclone lookup, download and command line

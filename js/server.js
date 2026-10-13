@@ -7,14 +7,18 @@
  */
 
 const ServerManager = (() => {
+    const dns = require('dns');
     const fs = require('fs');
     const net = require('net');
+    const os = require('os');
+    const path = require('path');
     const { spawn } = require('child_process');
 
     // Support both Electron (script tags) and Node.js (tests)
     const Config = typeof ConfigManager !== 'undefined' ? ConfigManager : require('./config.js');
     const Network = typeof NetworkInfo !== 'undefined' ? NetworkInfo : require('./network.js');
     const Filter = typeof AccessFilter !== 'undefined' ? AccessFilter : require('./access-filter.js');
+    const Gateway = typeof ItemGateway !== 'undefined' ? ItemGateway : require('./gateway.js');
     const Rclone = typeof RcloneManager !== 'undefined' ? RcloneManager : require('./rclone.js');
     const Htpasswd = typeof HtpasswdManager !== 'undefined' ? HtpasswdManager : require('./htpasswd.js');
 
@@ -33,6 +37,10 @@ const ServerManager = (() => {
         error: null,
         errorCode: null,
         storagePath: '',
+        // Where the folder sits on the server: '/' or '/<Name>.library/'
+        urlPath: '/',
+        // Whether /item/<ID> and /thumbnail/<ID> addresses are being answered
+        itemLinks: false,
         hosts: [],
         port: 0,
         https: false,
@@ -145,6 +153,42 @@ const ServerManager = (() => {
         });
     }
 
+    /**
+     * The IP addresses to listen on. Names typed into "Other addresses" are
+     * resolved here, because a name usually points at an address that the LAN or
+     * Tailscale option has already added, and binding the same address twice fails.
+     * @param {object} config
+     * @returns {Promise<string[]>}
+     */
+    async function resolveHosts(config) {
+        const hosts = [];
+        for (const host of Network.resolveBindHosts(config)) {
+            if (net.isIP(host)) {
+                hosts.push(host);
+                continue;
+            }
+
+            let records;
+            try {
+                records = await dns.promises.lookup(host, { all: true });
+            } catch {
+                throw new ServerError(`"${host}" under Other addresses is not a name this computer can resolve.`, 'BAD_HOST');
+            }
+            const ipv4 = records.filter(record => record.family === 4).map(record => record.address);
+            hosts.push(...(ipv4.length ? ipv4 : records.map(record => record.address)));
+        }
+        return [...new Set(hosts)];
+    }
+
+    // What the address list needs to know beyond the bound IPs
+    function urlInfo(config = Config.getConfig()) {
+        return {
+            tailscaleName,
+            hostname: os.hostname().toLowerCase(),
+            names: config.extraHosts.filter(host => !net.isIP(host))
+        };
+    }
+
     // Checked before rclone is launched: once something else is answering on the
     // port, "is it accepting connections yet" can no longer tell the two apart
     function assertCanListen(host, port) {
@@ -173,7 +217,20 @@ const ServerManager = (() => {
             );
         }
 
-        const plan = { storagePath, rclonePath, port: config.port, https: config.httpsEnabled };
+        const plan = { storagePath, rclonePath, port: config.port, https: config.httpsEnabled, mountName: '' };
+
+        // Under its own folder name, an address keeps meaning the same library
+        // whichever one is open in Eagle
+        if (config.storageMode === 'library' && config.libraryNameInUrl) {
+            plan.mountName = path.basename(storagePath);
+            // "=" separates the name from the path in rclone's combine syntax
+            if (!plan.mountName || plan.mountName.includes('=')) {
+                throw new ServerError(
+                    `The library folder name "${plan.mountName}" cannot be used in an address. Turn off "Put the library name in the address".`,
+                    'BAD_LIBRARY_NAME'
+                );
+            }
+        }
 
         if (config.httpsEnabled) {
             if (!config.certPath || !config.keyPath) {
@@ -193,13 +250,26 @@ const ServerManager = (() => {
             plan.htpasswdPath = Config.getHtpasswdPath();
         }
 
-        plan.hosts = Network.resolveBindHosts(config);
+        plan.hosts = await resolveHosts(config);
         const publicEndpoints = plan.hosts.map(host => ({ host, port: config.port }));
         for (const endpoint of publicEndpoints) {
             await assertCanListen(endpoint.host, endpoint.port);
         }
 
-        if (config.accessRestrictionEnabled) {
+        plan.urlPath = plan.mountName ? `/${encodeURIComponent(plan.mountName)}/` : '/';
+
+        if (config.itemLinksEnabled && config.storageMode === 'library') {
+            // The gateway owns the public ports, HTTPS and the client check;
+            // rclone serves plain HTTP on a loopback port behind it
+            plan.backend = { host: '127.0.0.1', port: await getFreePort() };
+            plan.gateway = {
+                listen: publicEndpoints,
+                tls: plan.https ? { certPath: plan.certPath, keyPath: plan.keyPath } : null,
+                allowedClients: config.accessRestrictionEnabled ? config.allowedClients : null,
+                libraryPath: storagePath,
+                urlPath: plan.urlPath
+            };
+        } else if (config.accessRestrictionEnabled) {
             // rclone hides on a loopback port; the access filter owns the public ones
             plan.backend = { host: '127.0.0.1', port: await getFreePort() };
             plan.filter = { listen: publicEndpoints, allowedClients: config.allowedClients };
@@ -207,13 +277,16 @@ const ServerManager = (() => {
             plan.backend = { host: plan.hosts[0] === '0.0.0.0' ? '127.0.0.1' : plan.hosts[0], port: config.port };
         }
 
+        plan.env = Rclone.buildEnv({ storagePath, mountName: plan.mountName });
         plan.args = Rclone.buildArgs({
             storagePath,
-            addrs: plan.filter
+            mountName: plan.mountName,
+            addrs: (plan.filter || plan.gateway)
                 ? [Rclone.formatAddr(plan.backend.host, plan.backend.port)]
                 : publicEndpoints.map(endpoint => Rclone.formatAddr(endpoint.host, endpoint.port)),
-            certPath: plan.certPath,
-            keyPath: plan.keyPath,
+            // Behind the gateway, the gateway is the one speaking HTTPS
+            certPath: plan.gateway ? '' : plan.certPath,
+            keyPath: plan.gateway ? '' : plan.keyPath,
             htpasswdPath: plan.htpasswdPath,
             dirCacheTime: config.dirCacheTime,
             readOnly: config.readOnly,
@@ -256,7 +329,11 @@ const ServerManager = (() => {
     }
 
     function spawnRclone(plan) {
-        const proc = spawn(plan.rclonePath, plan.args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+        const proc = spawn(plan.rclonePath, plan.args, {
+            windowsHide: true,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            env: { ...process.env, ...plan.env }
+        });
         proc.recentLines = [];
         proc.probeNoiseUntil = Infinity;
         proc.exited = new Promise(resolve => {
@@ -348,7 +425,7 @@ const ServerManager = (() => {
 
     function refreshUrls() {
         if (state.status !== 'running') return;
-        setState({ urls: Network.buildUrls(state.hosts, state.port, state.https, { tailscaleName }) });
+        setState({ urls: Network.buildUrls(state.hosts, state.port, state.https, urlInfo()) });
     }
 
     async function startNow() {
@@ -390,14 +467,32 @@ const ServerManager = (() => {
                 log(`Eagle Serve: access filter on, allowing ${plan.filter.allowedClients.join(', ')}`);
             }
 
+            if (plan.gateway) {
+                proxy = Gateway.create({ ...plan.gateway, target: plan.backend, log });
+                try {
+                    await proxy.start();
+                } catch (err) {
+                    throw new ServerError(
+                        PORT_IN_USE.test(err.code || err.message)
+                            ? `Port ${plan.port} is already in use. Choose another port or stop whatever is using it.`
+                            : `Item links could not start: ${err.message}`,
+                        'GATEWAY_FAILED'
+                    );
+                }
+                log('Eagle Serve: item links on, items answer at /item/<ID> and /thumbnail/<ID>' +
+                    (plan.gateway.allowedClients ? `; access filter on, allowing ${plan.gateway.allowedClients.join(', ')}` : ''));
+            }
+
             proc.serving = true;
             setState({
                 status: 'running',
                 storagePath: plan.storagePath,
+                urlPath: plan.urlPath,
+                itemLinks: Boolean(plan.gateway),
                 hosts: plan.hosts,
                 port: plan.port,
                 https: plan.https,
-                urls: Network.buildUrls(plan.hosts, plan.port, plan.https, { tailscaleName }),
+                urls: Network.buildUrls(plan.hosts, plan.port, plan.https, urlInfo(config)),
                 rclonePath: plan.rclonePath,
                 pid: proc.pid
             });
@@ -420,7 +515,7 @@ const ServerManager = (() => {
                 error: err.message,
                 errorCode: err.code || 'START_FAILED',
                 storagePath: '',
-                hosts: Network.resolveBindHosts(config),
+                hosts: await resolveHosts(config).catch(() => Network.resolveBindHosts(config)),
                 urls: [],
                 pid: null
             });
@@ -447,8 +542,9 @@ const ServerManager = (() => {
         if (!wanted || (state.status !== 'running' && state.status !== 'error')) return;
 
         const config = Config.getConfig();
-        const hosts = Network.resolveBindHosts(config);
-        const hostsChanged = hosts.join(',') !== state.hosts.join(',');
+        // A name that does not resolve right now is no reason to restart
+        const hosts = await resolveHosts(config).catch(() => null);
+        const hostsChanged = hosts !== null && hosts.join(',') !== state.hosts.join(',');
 
         // Also covers a start that failed because Eagle had no library ready yet
         let libraryChanged = false;

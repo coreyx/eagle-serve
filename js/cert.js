@@ -124,6 +124,8 @@ const CertManager = (() => {
             '127.0.0.1',
             '::1',
             os.hostname().toLowerCase(),
+            // The name Apple devices use to find this computer on the local network
+            `${os.hostname().toLowerCase()}.local`,
             ...addresses.filter(a => a.kind !== 'other').map(a => a.address),
             tailscaleName
         ]);
