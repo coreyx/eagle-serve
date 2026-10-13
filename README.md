@@ -6,6 +6,8 @@ It is the plugin form of [webdav-server-kit](https://github.com/coreyx/webdav-se
 
 ![Eagle Serve window](assets/screenshot.png)
 
+*The window with item links turned on, serving on a non-default port.*
+
 ---
 
 ## ✨ Features
@@ -118,6 +120,7 @@ The ID is looked up in the library being served each time, from the item's `imag
 - An ID from a library that is not the one open in Eagle returns 404.
 - After a rename, the new file can take up to the folder listing cache time (5 seconds by default) to appear.
 - With this on, connections go through a small HTTP layer inside the plugin on their way to rclone (see [How It Works](#-how-it-works)). The ordinary WebDAV addresses keep working unchanged.
+- There is no right-click entry in Eagle for copying an item's link yet. [docs/context-menu-findings.md](docs/context-menu-findings.md) explains what Eagle allows and what building one would take.
 
 > **Writing to a library from outside Eagle.** **Read-only** is on by default. With it off, connected devices can change and delete files in the library, including deleting the whole library folder in one request, and Eagle does not expect files to change underneath it. Turn it off only if you have a specific reason to write.
 
@@ -294,6 +297,8 @@ eagle-serve/
 │       └── build.yml                 # CI: test, build .eagleplugin, publish release on version tags
 ├── assets/
 │   └── screenshot.png                # Window screenshot for this README
+├── docs/
+│   └── context-menu-findings.md      # Why there is no right-click "Copy Eagle Serve Link" entry
 ├── css/
 │   └── style.css                     # Native Eagle theming (6 themes) and layout
 ├── js/
