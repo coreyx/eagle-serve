@@ -155,6 +155,14 @@ The default port is `41599` rather than 8080 so it sits beside Eagle's own local
 
 It holds `config.json`, the `htpasswd` file, generated certificates (`certs/`), a downloaded rclone (`bin/`) and `server.pid`. **Advanced > Open settings folder** opens it.
 
+### Exporting and importing settings
+
+**Advanced > Export settings…** writes every setting on the page to a JSON file, and **Import settings…** loads one back, to copy a setup to another computer or keep a backup.
+
+- An import fills in the form and waits in the **Unsaved changes** bar. Nothing takes effect until you choose **Save and restart**, and **Discard** puts the current settings back.
+- The file holds the settings only. Users (the `htpasswd` file) and certificate files are not included; copy them from the settings folder if you need them. Certificate and rclone paths are exported as written, so check them after importing on another computer.
+- Settings the file leaves out get their defaults, and a plain `config.json` copied from the settings folder imports too. A file with a value of the wrong kind is refused with a message naming the setting.
+
 ---
 
 ## 🔒 HTTPS

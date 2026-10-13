@@ -22,6 +22,7 @@
 ### 4. Good to Know
 - **Read-only** is on by default: other devices can open and copy files but not change the library. Eagle does not expect files to change underneath it, so turn it off only if you need to write.
 - Turn on **Give every item an address by its ID** for links like `https://host:41599/item/MV63BVOWOZLV6` (and `/thumbnail/MV63BVOWOZLV6` for its thumbnail) that keep working after the item or the library is renamed.
+- **Export settings…** and **Import settings…** under **Advanced** copy a setup to another computer or keep a backup. Users and certificate files are not part of the file.
 - Files Eagle adds show up on other devices after the folder listing cache time (5 seconds by default).
 - Developed and tested on Windows. macOS support is in place but has not been run on a Mac yet.
 

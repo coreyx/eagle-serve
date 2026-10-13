@@ -39,6 +39,9 @@ const ConfigManager = (() => {
     };
 
     const DATA_DIR_NAME = 'eagle-serve';
+    // Marks an export file as ours, and lets a later format tell itself apart
+    const EXPORT_APP = 'eagle-serve';
+    const EXPORT_FORMAT = 1;
     const DURATION = /^(\d+(\.\d+)?(ms|s|m|h))+$/;
 
     function defaultDataDir() {
@@ -145,6 +148,65 @@ const ConfigManager = (() => {
         getCertsDir() { return path.join(this.getDataDir(), 'certs'); },
         getBinDir() { return path.join(this.getDataDir(), 'bin'); },
         getPidPath() { return path.join(this.getDataDir(), 'server.pid'); },
+
+        /**
+         * The saved settings as the text of an export file. It holds the settings
+         * only: users (the htpasswd file) and certificate files are not part of it.
+         * @returns {string}
+         */
+        exportConfig() {
+            return JSON.stringify({
+                app: EXPORT_APP,
+                formatVersion: EXPORT_FORMAT,
+                exportedAt: new Date().toISOString(),
+                config: this.getConfig()
+            }, null, 4) + '\n';
+        },
+
+        /**
+         * Reads an export file, or a bare config.json, into a complete and valid
+         * configuration. Nothing is saved; settings the file leaves out get their defaults.
+         * @param {string} text
+         * @returns {typeof DEFAULT_CONFIG}
+         * @throws {Error} With a message for the user when the text is not Eagle Serve settings.
+         */
+        importConfig(text) {
+            let parsed;
+            try {
+                parsed = JSON.parse(String(text).replace(/^\uFEFF/, ''));
+            } catch {
+                throw new Error('This file is not valid JSON.');
+            }
+            const isObject = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+            if (!isObject(parsed)) throw new Error('This file does not contain Eagle Serve settings.');
+            if (parsed.app !== undefined && parsed.app !== EXPORT_APP) {
+                throw new Error('This file was not exported by Eagle Serve.');
+            }
+            if (typeof parsed.formatVersion === 'number' && parsed.formatVersion > EXPORT_FORMAT) {
+                throw new Error('This file was exported by a newer version of Eagle Serve.');
+            }
+
+            const source = isObject(parsed.config) ? parsed.config : parsed;
+            const picked = {};
+            for (const [key, fallback] of Object.entries(DEFAULT_CONFIG)) {
+                const value = source[key];
+                if (value === undefined) continue;
+
+                // A value of the wrong kind means the file is not what it claims to be;
+                // refuse it rather than quietly import half of it
+                let usable = typeof value === typeof fallback;
+                if (Array.isArray(fallback)) usable = Array.isArray(value) || typeof value === 'string';
+                else if (key === 'port') usable = ['number', 'string'].includes(typeof value) && value !== '' && Number.isInteger(Number(value));
+                else if (key === 'dirCacheTime') usable = typeof value === 'string' || typeof value === 'number';
+                if (!usable) throw new Error(`The "${key}" setting in this file has a value Eagle Serve cannot use.`);
+
+                picked[key] = value;
+            }
+            if (Object.keys(picked).length === 0) {
+                throw new Error('This file does not contain any Eagle Serve settings.');
+            }
+            return sanitize(picked);
+        },
 
         /**
          * Retrieves current configuration merged with defaults.

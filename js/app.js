@@ -36,6 +36,12 @@
         return result && !result.canceled && result.filePaths.length ? result.filePaths[0] : null;
     }
 
+    async function pickSavePath(options) {
+        if (!hasEagle || !eagle.dialog) return null;
+        const result = await eagle.dialog.showSaveDialog(options);
+        return result && !result.canceled && result.filePath ? result.filePath : null;
+    }
+
     async function copyText(text) {
         if (hasEagle && eagle.clipboard && eagle.clipboard.writeText) {
             await eagle.clipboard.writeText(text);
@@ -424,6 +430,53 @@
         ServerManager.start();
     }
 
+    // --- Export and import ----------------------------------------------------
+
+    const SETTINGS_FILTERS = [{ name: 'Eagle Serve settings', extensions: ['json'] }];
+
+    async function exportSettings() {
+        const message = $('settings-message');
+        try {
+            const target = await pickSavePath({
+                title: 'Export Eagle Serve settings',
+                defaultPath: 'eagle-serve-settings.json',
+                filters: SETTINGS_FILTERS
+            });
+            if (!target) return;
+
+            require('fs').writeFileSync(target, ConfigManager.exportConfig());
+            // The file holds what is in effect, not what is still being edited
+            message.textContent = `Exported to ${target}.` +
+                (isDirty() ? ' Unsaved changes on this page were not included.' : '');
+        } catch (err) {
+            message.textContent = `The settings could not be exported: ${err.message}`;
+        }
+    }
+
+    async function importSettings() {
+        const message = $('settings-message');
+        try {
+            const source = await pickPath({
+                title: 'Import Eagle Serve settings',
+                properties: ['openFile'],
+                filters: [...SETTINGS_FILTERS, { name: 'All files', extensions: ['*'] }]
+            });
+            if (!source) return;
+
+            const imported = ConfigManager.importConfig(require('fs').readFileSync(source, 'utf8'));
+            // Imported settings land in the form like any other edit, to be checked before they take effect
+            certReplaced = false;
+            writeForm(imported);
+            updateFormState();
+            renderCertInfo();
+            message.textContent = isDirty()
+                ? `Loaded ${source}. Check the settings, then save to apply them.`
+                : `${source} matches the current settings.`;
+        } catch (err) {
+            message.textContent = `The settings could not be imported: ${err.message}`;
+        }
+    }
+
     // --- Wiring ---------------------------------------------------------------
 
     async function browseInto(inputId, options) {
@@ -489,6 +542,8 @@
         $('rclone-download-btn').addEventListener('click', event => downloadRclone(event.currentTarget));
         $('rclone-update-btn').addEventListener('click', event => downloadRclone(event.currentTarget));
         $('rclone-locate-btn').addEventListener('click', locateRclone);
+        $('settings-export-btn').addEventListener('click', exportSettings);
+        $('settings-import-btn').addEventListener('click', importSettings);
         $('data-folder-btn').addEventListener('click', () => {
             require('fs').mkdirSync(ConfigManager.getDataDir(), { recursive: true });
             if (hasEagle && eagle.shell) eagle.shell.openPath(ConfigManager.getDataDir());

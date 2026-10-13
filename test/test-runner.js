@@ -130,6 +130,38 @@ async function runTests() {
     // A fresh load reads the file back
     ConfigManager.setDataDir(dataDir);
     assert.strictEqual(ConfigManager.getConfig().port, 41700);
+
+    // Export and import
+    ConfigManager.saveConfig({ port: 41701, bindTailscale: true, allowedClients: ['self', 'macbook-air'], dirCacheTime: '1m' });
+    const exported = ConfigManager.exportConfig();
+    const exportedFile = JSON.parse(exported);
+    assert.strictEqual(exportedFile.app, 'eagle-serve');
+    assert.strictEqual(exportedFile.formatVersion, 1);
+    assert.ok(!isNaN(Date.parse(exportedFile.exportedAt)));
+    assert.deepStrictEqual(exportedFile.config, ConfigManager.getConfig());
+
+    ConfigManager.saveConfig({ ...ConfigManager.DEFAULT_CONFIG });
+    assert.deepStrictEqual(ConfigManager.importConfig(exported), exportedFile.config, 'An export imports back unchanged');
+    assert.strictEqual(ConfigManager.getConfig().port, 41599, 'Importing does not save anything by itself');
+    assert.deepStrictEqual(ConfigManager.importConfig('\uFEFF' + exported), exportedFile.config, 'A byte order mark is tolerated');
+
+    // A bare config.json works too, and settings it leaves out get their defaults
+    const partial = ConfigManager.importConfig(JSON.stringify({ port: '8080', readOnly: false, dirCacheTime: 30, somethingElse: true }));
+    assert.strictEqual(partial.port, 8080);
+    assert.strictEqual(partial.readOnly, false);
+    assert.strictEqual(partial.dirCacheTime, '30s');
+    assert.strictEqual(partial.bindTailscale, false);
+    assert.strictEqual(partial.somethingElse, undefined, 'Unknown settings are dropped');
+
+    assert.throws(() => ConfigManager.importConfig('not json'), /not valid JSON/);
+    assert.throws(() => ConfigManager.importConfig('[1, 2]'), /does not contain/);
+    assert.throws(() => ConfigManager.importConfig('{"name": "something else entirely"}'), /does not contain any/);
+    assert.throws(() => ConfigManager.importConfig('{"app": "another-app", "config": {"port": 1}}'), /not exported by Eagle Serve/);
+    assert.throws(() => ConfigManager.importConfig('{"app": "eagle-serve", "formatVersion": 2, "config": {"port": 1}}'), /newer version/);
+    assert.throws(() => ConfigManager.importConfig('{"readOnly": "false"}'), /"readOnly"/, 'A value of the wrong kind is refused, not guessed at');
+    assert.throws(() => ConfigManager.importConfig('{"port": "eighty"}'), /"port"/);
+    assert.throws(() => ConfigManager.importConfig('{"allowedClients": 5}'), /"allowedClients"/);
+
     ConfigManager.saveConfig({ ...ConfigManager.DEFAULT_CONFIG });
     console.log('   ✓ ConfigManager tests passed.');
 

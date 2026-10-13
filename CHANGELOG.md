@@ -38,6 +38,8 @@ First release: [webdav-server-kit](https://github.com/coreyx/webdav-server-kit) 
 - **rclone Management**:
   - Finds rclone on `PATH` and in the usual winget, Scoop, Chocolatey and Homebrew locations.
   - One-click download of the official rclone release, verified against the published SHA-256 sums.
+- **Settings Export and Import**:
+  - **Export settings…** writes the saved settings to a JSON file; **Import settings…** loads one into the form as unsaved changes to review before saving. Users and certificate files are not part of the file.
 - **Settings Window**:
   - Status, addresses, error messages and a live log, with an unsaved-changes bar and **Save and restart**.
   - Native theming for Eagle's DARK, GRAY, LIGHT, LIGHTGRAY, BLUE and PURPLE themes.
